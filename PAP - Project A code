@@ -1,0 +1,1367 @@
+#include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <ctype.h>
+#include <errno.h>
+
+/* ===================== DECLARATIONS ===================== */
+
+/* ---- utils ---- */
+#define LINE_WIDTH   80
+#define MAX_AMOUNT   1000000000.0   /* upper limit for any money value */
+
+/* ---- display helpers ---- */
+void printLine(char ch, int count);
+void printHeader(const char *title);
+void pressEnter(void);
+
+/* ---- input helpers (all re-prompt until the input is valid) ---- */
+void   readLine(const char *prompt, char *buffer, int size);
+void   readRequiredString(const char *prompt, char *buffer, int size);
+int    readIntInRange(const char *prompt, int min, int max);
+double readAmount(const char *prompt, int allowZero);
+int    confirm(const char *prompt);
+
+/* ---- string helpers ---- */
+void trim(char *s);
+void toLowerCopy(const char *src, char *dest, int size);
+int  equalsIgnoreCase(const char *a, const char *b);
+int  containsIgnoreCase(const char *text, const char *pattern);
+int  isValidEmail(const char *email);
+int  isValidPhone(const char *phone);
+
+/* ---- employees ---- */
+#define MAX_EMPLOYEES 100
+#define EMP_ID_LEN    12
+#define EMP_NAME_LEN  50
+#define EMP_DEPT_LEN  40
+#define EMP_TITLE_LEN 40
+
+/* menu and main operations */
+void   employeeMenu(void);
+void   addEmployee(void);
+void   displayEmployees(void);
+void   searchEmployee(void);
+void   calculateSalary(void);
+void   loadSampleEmployees(void);
+
+/* calculations (pass-by-value, return a result) */
+double calculateGross(int index);
+double calculateTax(double gross);
+double calculateSocialSecurity(double gross);
+double calculateNetSalary(double gross, double tax, double ssc);
+
+/* helpers used by other modules (reports) */
+int         findEmployeeById(const char *id);
+int         getEmployeeCount(void);
+double      getEmployeeGross(int index);
+const char *getEmployeeName(int index);
+
+/* ---- budget ---- */
+#define MAX_DEPTS      20
+#define DEPT_NAME_LEN  40
+
+void budgetMenu(void);
+void addDepartmentBudget(void);
+void recordExpenditure(void);
+void displayBudgets(void);
+void viewDepartmentBudget(void);
+void displayExceededDepartments(void);
+void loadSampleBudgets(void);
+
+/* calculations (pass-by-value, return a result) */
+double      calculateRemaining(double allocated, double spent);
+const char *getBudgetStatus(double allocated, double spent);
+
+/* helpers used by other modules (reports) */
+int         findDepartment(const char *name);
+int         getBudgetCount(void);
+const char *getBudgetName(int index);
+double      getBudgetAllocated(int index);
+double      getBudgetSpent(int index);
+
+/* ---- suppliers ---- */
+#define MAX_SUPPLIERS   100
+#define SUP_ID_LEN      12
+#define SUP_NAME_LEN    50
+#define SUP_EMAIL_LEN   60
+#define SUP_PHONE_LEN   20
+#define SUP_TOWN_LEN    40
+
+void supplierMenu(void);
+void addSupplier(void);
+void displaySuppliers(void);
+void searchSupplier(void);
+void compareSuppliers(void);
+void loadSampleSuppliers(void);
+
+int findSupplierById(const char *id);
+int getSupplierCount(void);
+
+/* ---- assets ---- */
+#define MAX_ASSETS       100
+#define ASSET_ID_LEN     12
+#define ASSET_NAME_LEN   40
+#define ASSET_TYPE_LEN   16
+#define ASSET_DEPT_LEN   40
+#define ASSET_COND_LEN   12
+#define ASSET_TYPE_COUNT 5
+
+void assetMenu(void);
+void addAsset(void);
+void displayAssets(void);
+void searchAsset(void);
+void loadSampleAssets(void);
+
+int         findAssetById(const char *id);
+int         getAssetCount(void);
+double      getAssetValue(int index);
+const char *getAssetType(int index);
+const char *getAssetTypeName(int typeIndex);
+
+/* ---- reports ---- */
+void reportsMenu(void);
+void employeeReport(void);
+void budgetReport(void);
+void supplierReport(void);
+void assetReport(void);
+
+/* ===================== UTILS ===================== */
+#define TMP_LEN 128
+
+void printLine(char ch, int count)
+{
+    int i;
+    for (i = 0; i < count; i++)
+        putchar(ch);
+    putchar('\n');
+}
+
+void printHeader(const char *title)
+{
+    printf("\n");
+    printLine('=', LINE_WIDTH);
+    printf("%s\n", title);
+    printLine('=', LINE_WIDTH);
+}
+
+/* Remove leading and trailing white space (including the newline). */
+void trim(char *s)
+{
+    int start = 0, end, i;
+
+    end = (int)strlen(s) - 1;
+    while (end >= 0 && isspace((unsigned char)s[end])) {
+        s[end] = '\0';
+        end--;
+    }
+    while (s[start] != '\0' && isspace((unsigned char)s[start]))
+        start++;
+    if (start > 0) {
+        for (i = 0; s[i + start] != '\0'; i++)
+            s[i] = s[i + start];
+        s[i] = '\0';
+    }
+}
+
+/* Reads one line safely with fgets. Long lines are cut and the rest discarded. */
+void readLine(const char *prompt, char *buffer, int size)
+{
+    int c;
+
+    printf("%s", prompt);
+    if (fgets(buffer, size, stdin) == NULL) {
+        printf("\nInput closed. Exiting program.\n");
+        exit(0);
+    }
+    if (strchr(buffer, '\n') == NULL) {
+        while ((c = getchar()) != '\n' && c != EOF)
+            ;
+    }
+    trim(buffer);
+}
+
+/* Keeps asking until the user types something that is not empty. */
+void readRequiredString(const char *prompt, char *buffer, int size)
+{
+    while (1) {
+        readLine(prompt, buffer, size);
+        if (strlen(buffer) > 0)
+            return;
+        printf("  Error: this field cannot be empty.\n");
+    }
+}
+
+int readIntInRange(const char *prompt, int min, int max)
+{
+    char buf[32];
+    char *end;
+    long value;
+
+    while (1) {
+        readLine(prompt, buf, sizeof(buf));
+        if (strlen(buf) == 0) {
+            printf("  Error: input cannot be empty.\n");
+            continue;
+        }
+        errno = 0;
+        value = strtol(buf, &end, 10);
+        if (*end != '\0' || errno == ERANGE) {
+            printf("  Error: please enter a whole number.\n");
+            continue;
+        }
+        if (value < min || value > max) {
+            printf("  Invalid choice. Enter a number from %d to %d.\n", min, max);
+            continue;
+        }
+        return (int)value;
+    }
+}
+
+/* Reads a money value. Rejects text, negatives, NaN and absurdly large values. */
+double readAmount(const char *prompt, int allowZero)
+{
+    char buf[40];
+    char *end;
+    double value;
+
+    while (1) {
+        readLine(prompt, buf, sizeof(buf));
+        if (strlen(buf) == 0) {
+            printf("  Error: input cannot be empty.\n");
+            continue;
+        }
+        errno = 0;
+        value = strtod(buf, &end);
+        if (*end != '\0' || errno == ERANGE) {
+            printf("  Error: please enter a valid number (e.g. 12500.50).\n");
+            continue;
+        }
+        if (!(value >= 0.0)) {
+            printf("  Error: the value cannot be negative.\n");
+            continue;
+        }
+        if (value == 0.0 && !allowZero) {
+            printf("  Error: the value must be greater than zero.\n");
+            continue;
+        }
+        if (value > MAX_AMOUNT) {
+            printf("  Error: the value is too large.\n");
+            continue;
+        }
+        return value;
+    }
+}
+
+int confirm(const char *prompt)
+{
+    char buf[8];
+
+    while (1) {
+        readLine(prompt, buf, sizeof(buf));
+        if (strcmp(buf, "y") == 0 || strcmp(buf, "Y") == 0)
+            return 1;
+        if (strcmp(buf, "n") == 0 || strcmp(buf, "N") == 0)
+            return 0;
+        printf("  Please type y or n.\n");
+    }
+}
+
+void pressEnter(void)
+{
+    char buf[8];
+    readLine("\nPress Enter to continue...", buf, sizeof(buf));
+}
+
+void toLowerCopy(const char *src, char *dest, int size)
+{
+    int i;
+    for (i = 0; src[i] != '\0' && i < size - 1; i++)
+        dest[i] = (char)tolower((unsigned char)src[i]);
+    dest[i] = '\0';
+}
+
+int equalsIgnoreCase(const char *a, const char *b)
+{
+    char la[TMP_LEN], lb[TMP_LEN];
+
+    toLowerCopy(a, la, TMP_LEN);
+    toLowerCopy(b, lb, TMP_LEN);
+    return strcmp(la, lb) == 0;
+}
+
+/* Returns 1 if 'pattern' appears anywhere inside 'text' (ignoring case). */
+int containsIgnoreCase(const char *text, const char *pattern)
+{
+    char lt[TMP_LEN], lp[TMP_LEN];
+
+    toLowerCopy(text, lt, TMP_LEN);
+    toLowerCopy(pattern, lp, TMP_LEN);
+    return strstr(lt, lp) != NULL;
+}
+
+int isValidEmail(const char *email)
+{
+    const char *at = strchr(email, '@');
+    const char *dot;
+    int i, len = (int)strlen(email);
+
+    if (len < 5 || at == NULL)
+        return 0;
+    if (at == email || at != strrchr(email, '@'))
+        return 0;
+    for (i = 0; i < len; i++) {
+        if (isspace((unsigned char)email[i]))
+            return 0;
+    }
+    dot = strrchr(at, '.');
+    if (dot == NULL || dot == at + 1 || dot[1] == '\0')
+        return 0;
+    return 1;
+}
+
+/* Digits, spaces, hyphens and one optional leading '+'; 7 to 15 digits. */
+int isValidPhone(const char *phone)
+{
+    int i, digits = 0, len = (int)strlen(phone);
+
+    for (i = 0; i < len; i++) {
+        if (isdigit((unsigned char)phone[i]))
+            digits++;
+        else if (phone[i] == '+' && i == 0)
+            continue;
+        else if (phone[i] == ' ' || phone[i] == '-')
+            continue;
+        else
+            return 0;
+    }
+    return digits >= 7 && digits <= 15;
+}
+
+/* ===================== EMPLOYEES ===================== */
+/* Simplified monthly payroll rules (N$) - assumptions made for this project. */
+#define TAX_LIMIT_1  8000.00    /* no tax up to this gross salary          */
+#define TAX_LIMIT_2  20000.00   /* second band ends here                   */
+#define TAX_RATE_1   0.18       /* tax rate on the band 8,000 - 20,000     */
+#define TAX_RATE_2   0.25       /* tax rate above 20,000                   */
+#define SSC_RATE     0.009      /* social security contribution (0.9%)     */
+
+/* Employee records are stored in parallel arrays (same index = same person). */
+static char   empId[MAX_EMPLOYEES][EMP_ID_LEN];
+static char   empName[MAX_EMPLOYEES][EMP_NAME_LEN];
+static char   empDept[MAX_EMPLOYEES][EMP_DEPT_LEN];
+static char   empTitle[MAX_EMPLOYEES][EMP_TITLE_LEN];
+static double empBasic[MAX_EMPLOYEES];
+static double empHousing[MAX_EMPLOYEES];
+static double empTransport[MAX_EMPLOYEES];
+static double empOther[MAX_EMPLOYEES];
+static int    empCount = 0;
+
+/* ------------------------------------------------------------------ */
+/* Helpers                                                             */
+/* ------------------------------------------------------------------ */
+
+int findEmployeeById(const char *id)
+{
+    int i;
+    for (i = 0; i < empCount; i++) {
+        if (equalsIgnoreCase(empId[i], id))
+            return i;
+    }
+    return -1;
+}
+
+int getEmployeeCount(void)            { return empCount; }
+double getEmployeeGross(int index)    { return calculateGross(index); }
+const char *getEmployeeName(int index){ return empName[index]; }
+
+static void storeEmployee(const char *id, const char *name, const char *dept,
+                          const char *title, double basic, double housing,
+                          double transport, double other)
+{
+    strcpy(empId[empCount], id);
+    strcpy(empName[empCount], name);
+    strcpy(empDept[empCount], dept);
+    strcpy(empTitle[empCount], title);
+    empBasic[empCount]     = basic;
+    empHousing[empCount]   = housing;
+    empTransport[empCount] = transport;
+    empOther[empCount]     = other;
+    empCount++;
+}
+
+static void printEmployeeHeader(void)
+{
+    printf("%-8s %-22s %-14s %-16s %12s\n",
+           "ID", "Name", "Department", "Job Title", "Gross (N$)");
+    printLine('-', LINE_WIDTH);
+}
+
+static void printEmployeeRow(int i)
+{
+    printf("%-8.8s %-22.22s %-14.14s %-16.16s %12.2f\n",
+           empId[i], empName[i], empDept[i], empTitle[i], calculateGross(i));
+}
+
+/* ------------------------------------------------------------------ */
+/* Calculations                                                        */
+/* ------------------------------------------------------------------ */
+
+double calculateGross(int index)
+{
+    return empBasic[index] + empHousing[index] + empTransport[index] + empOther[index];
+}
+
+double calculateTax(double gross)
+{
+    if (gross <= TAX_LIMIT_1)
+        return 0.0;
+    else if (gross <= TAX_LIMIT_2)
+        return (gross - TAX_LIMIT_1) * TAX_RATE_1;
+    else
+        return (TAX_LIMIT_2 - TAX_LIMIT_1) * TAX_RATE_1
+               + (gross - TAX_LIMIT_2) * TAX_RATE_2;
+}
+
+double calculateSocialSecurity(double gross)
+{
+    return gross * SSC_RATE;
+}
+
+double calculateNetSalary(double gross, double tax, double ssc)
+{
+    return gross - tax - ssc;
+}
+
+static void showSalaryInfo(int i)
+{
+    double gross = calculateGross(i);
+    double tax   = calculateTax(gross);
+    double ssc   = calculateSocialSecurity(gross);
+    double net   = calculateNetSalary(gross, tax, ssc);
+
+    printHeader("SALARY INFORMATION");
+    printf("Employee ID   : %s\n", empId[i]);
+    printf("Name          : %s\n", empName[i]);
+    printf("Department    : %s\n", empDept[i]);
+    printf("Job Title     : %s\n", empTitle[i]);
+    printLine('-', LINE_WIDTH);
+    printf("%-26s N$ %12.2f\n", "Basic salary", empBasic[i]);
+    printf("%-26s N$ %12.2f\n", "Housing allowance", empHousing[i]);
+    printf("%-26s N$ %12.2f\n", "Transport allowance", empTransport[i]);
+    printf("%-26s N$ %12.2f\n", "Other allowance", empOther[i]);
+    printf("%-26s N$ %12.2f\n", "GROSS SALARY", gross);
+    printLine('-', LINE_WIDTH);
+    printf("%-26s N$ %12.2f\n", "Income tax (estimate)", tax);
+    printf("%-26s N$ %12.2f\n", "Social security (0.9%)", ssc);
+    printf("%-26s N$ %12.2f\n", "Total deductions", tax + ssc);
+    printLine('-', LINE_WIDTH);
+    printf("%-26s N$ %12.2f\n", "NET SALARY", net);
+}
+
+/* ------------------------------------------------------------------ */
+/* Menu operations                                                     */
+/* ------------------------------------------------------------------ */
+
+void addEmployee(void)
+{
+    char id[EMP_ID_LEN], name[EMP_NAME_LEN], dept[EMP_DEPT_LEN], title[EMP_TITLE_LEN];
+    double basic, housing, transport, other;
+
+    printHeader("ADD EMPLOYEE");
+    if (empCount >= MAX_EMPLOYEES) {
+        printf("The employee list is full (%d employees).\n", MAX_EMPLOYEES);
+        return;
+    }
+
+    while (1) {
+        readRequiredString("Employee ID (e.g. E001): ", id, EMP_ID_LEN);
+        if (findEmployeeById(id) == -1)
+            break;
+        printf("  Error: an employee with ID %s already exists.\n", id);
+    }
+    readRequiredString("Full name: ", name, EMP_NAME_LEN);
+    readRequiredString("Department: ", dept, EMP_DEPT_LEN);
+    readRequiredString("Job title: ", title, EMP_TITLE_LEN);
+    basic     = readAmount("Basic salary (N$ per month): ", 0);
+    housing   = readAmount("Housing allowance (N$): ", 1);
+    transport = readAmount("Transport allowance (N$): ", 1);
+    other     = readAmount("Other allowance (N$): ", 1);
+
+    storeEmployee(id, name, dept, title, basic, housing, transport, other);
+    printf("\nEmployee %s added successfully.\n", name);
+}
+
+void displayEmployees(void)
+{
+    int i;
+
+    printHeader("EMPLOYEE LIST");
+    if (empCount == 0) {
+        printf("No employees have been recorded yet.\n");
+        return;
+    }
+    printEmployeeHeader();
+    for (i = 0; i < empCount; i++)
+        printEmployeeRow(i);
+    printf("\nTotal employees: %d\n", empCount);
+}
+
+void searchEmployee(void)
+{
+    char term[EMP_NAME_LEN];
+    int option, i, found = 0;
+
+    printHeader("SEARCH EMPLOYEE");
+    if (empCount == 0) {
+        printf("No employees have been recorded yet.\n");
+        return;
+    }
+    printf("1. Search by Employee ID (exact)\n");
+    printf("2. Search by name (partial)\n");
+    printf("3. Search by department (partial)\n");
+    option = readIntInRange("Choose search type: ", 1, 3);
+    readRequiredString("Search for: ", term, EMP_NAME_LEN);
+
+    printf("\n");
+    printEmployeeHeader();
+    for (i = 0; i < empCount; i++) {
+        int match = 0;
+        if (option == 1)
+            match = equalsIgnoreCase(empId[i], term);
+        else if (option == 2)
+            match = containsIgnoreCase(empName[i], term);
+        else
+            match = containsIgnoreCase(empDept[i], term);
+
+        if (match) {
+            printEmployeeRow(i);
+            found++;
+        }
+    }
+    if (found == 0)
+        printf("No matching employee found.\n");
+    else
+        printf("\n%d employee(s) found.\n", found);
+}
+
+void calculateSalary(void)
+{
+    char id[EMP_ID_LEN];
+    int index;
+
+    printHeader("CALCULATE EMPLOYEE SALARY");
+    if (empCount == 0) {
+        printf("No employees have been recorded yet.\n");
+        return;
+    }
+    readRequiredString("Enter Employee ID: ", id, EMP_ID_LEN);
+    index = findEmployeeById(id);
+    if (index == -1) {
+        printf("No employee with ID %s was found.\n", id);
+        return;
+    }
+    showSalaryInfo(index);
+}
+
+void loadSampleEmployees(void)
+{
+    storeEmployee("E001", "Ndapewa Shikongo", "Finance",     "Accountant",     14000, 3500, 1200, 500);
+    storeEmployee("E002", "Johannes Amutenya","Engineering", "Civil Engineer", 22000, 5000, 1800, 0);
+    storeEmployee("E003", "Maria Haufiku",    "Health",      "Health Officer", 11000, 2500, 900,  300);
+    storeEmployee("E004", "Petrus Nghidinwa", "Finance",     "Clerk",           7000, 1500, 600,  0);
+    storeEmployee("E005", "Selma Kandjii",    "Water",       "Supervisor",     16500, 4000, 1500, 750);
+    storeEmployee("E006", "Daniel Uushona",   "Roads",       "Foreman",         9500, 2000, 1000, 0);
+}
+
+void employeeMenu(void)
+{
+    int choice;
+
+    do {
+        printHeader("EMPLOYEE MANAGEMENT");
+        printf("1. Add employee\n");
+        printf("2. Display all employees\n");
+        printf("3. Search for an employee\n");
+        printf("4. Calculate employee salary\n");
+        printf("5. Back to main menu\n");
+        choice = readIntInRange("Enter your choice: ", 1, 5);
+
+        switch (choice) {
+            case 1: addEmployee();      break;
+            case 2: displayEmployees(); break;
+            case 3: searchEmployee();   break;
+            case 4: calculateSalary();  break;
+            case 5: break;
+        }
+        if (choice != 5)
+            pressEnter();
+    } while (choice != 5);
+}
+
+/* ===================== BUDGET ===================== */
+/* Parallel arrays: index i describes one department. */
+static char   deptName[MAX_DEPTS][DEPT_NAME_LEN];
+static double deptAllocated[MAX_DEPTS];
+static double deptSpent[MAX_DEPTS];
+static int    deptCount = 0;
+
+/* ------------------------------------------------------------------ */
+/* Calculations and helpers                                            */
+/* ------------------------------------------------------------------ */
+
+double calculateRemaining(double allocated, double spent)
+{
+    return allocated - spent;
+}
+
+const char *getBudgetStatus(double allocated, double spent)
+{
+    if (calculateRemaining(allocated, spent) >= 0.0)
+        return "WITHIN BUDGET";
+    return "EXCEEDED BUDGET";
+}
+
+int findDepartment(const char *name)
+{
+    int i;
+    for (i = 0; i < deptCount; i++) {
+        if (equalsIgnoreCase(deptName[i], name))
+            return i;
+    }
+    return -1;
+}
+
+int getBudgetCount(void)              { return deptCount; }
+const char *getBudgetName(int index)  { return deptName[index]; }
+double getBudgetAllocated(int index)  { return deptAllocated[index]; }
+double getBudgetSpent(int index)      { return deptSpent[index]; }
+
+static void printBudgetDetail(int i)
+{
+    double remaining = calculateRemaining(deptAllocated[i], deptSpent[i]);
+
+    printf("Department       : %s\n", deptName[i]);
+    printf("Allocated Budget : N$%.2f\n", deptAllocated[i]);
+    printf("Expenditure      : N$%.2f\n", deptSpent[i]);
+    printf("Remaining Budget : N$%.2f\n", remaining);
+    printf("Status           : %s\n", getBudgetStatus(deptAllocated[i], deptSpent[i]));
+}
+
+/* ------------------------------------------------------------------ */
+/* Menu operations                                                     */
+/* ------------------------------------------------------------------ */
+
+void addDepartmentBudget(void)
+{
+    char name[DEPT_NAME_LEN];
+    double amount;
+
+    printHeader("ADD DEPARTMENT BUDGET");
+    if (deptCount >= MAX_DEPTS) {
+        printf("The budget list is full (%d departments).\n", MAX_DEPTS);
+        return;
+    }
+    while (1) {
+        readRequiredString("Department name: ", name, DEPT_NAME_LEN);
+        if (findDepartment(name) == -1)
+            break;
+        printf("  Error: %s already has a budget.\n", name);
+    }
+    amount = readAmount("Allocated budget (N$): ", 0);
+
+    strcpy(deptName[deptCount], name);
+    deptAllocated[deptCount] = amount;
+    deptSpent[deptCount] = 0.0;
+    deptCount++;
+    printf("\nBudget for %s saved.\n", name);
+}
+
+void recordExpenditure(void)
+{
+    char name[DEPT_NAME_LEN];
+    int index;
+    double amount;
+
+    printHeader("RECORD EXPENDITURE");
+    if (deptCount == 0) {
+        printf("No department budgets exist yet. Add a budget first.\n");
+        return;
+    }
+    readRequiredString("Department name: ", name, DEPT_NAME_LEN);
+    index = findDepartment(name);
+    if (index == -1) {
+        printf("Department \"%s\" was not found.\n", name);
+        return;
+    }
+    amount = readAmount("Expenditure to add (N$): ", 0);
+    deptSpent[index] += amount;
+
+    printf("\n");
+    printBudgetDetail(index);
+    if (deptSpent[index] > deptAllocated[index])
+        printf("\nWARNING: %s has exceeded its allocated budget!\n", deptName[index]);
+}
+
+void displayBudgets(void)
+{
+    int i;
+
+    printHeader("DEPARTMENT BUDGETS");
+    if (deptCount == 0) {
+        printf("No department budgets have been entered yet.\n");
+        return;
+    }
+    printf("%-16s %14s %14s %14s  %-15s\n",
+           "Department", "Allocated", "Spent", "Remaining", "Status");
+    printLine('-', LINE_WIDTH);
+    for (i = 0; i < deptCount; i++) {
+        printf("%-16.16s %14.2f %14.2f %14.2f  %-15s\n",
+               deptName[i], deptAllocated[i], deptSpent[i],
+               calculateRemaining(deptAllocated[i], deptSpent[i]),
+               getBudgetStatus(deptAllocated[i], deptSpent[i]));
+    }
+}
+
+void viewDepartmentBudget(void)
+{
+    char name[DEPT_NAME_LEN];
+    int index;
+
+    printHeader("VIEW DEPARTMENT BUDGET");
+    if (deptCount == 0) {
+        printf("No department budgets have been entered yet.\n");
+        return;
+    }
+    readRequiredString("Department name: ", name, DEPT_NAME_LEN);
+    index = findDepartment(name);
+    if (index == -1) {
+        printf("Department \"%s\" was not found.\n", name);
+        return;
+    }
+    printf("\n");
+    printBudgetDetail(index);
+}
+
+void displayExceededDepartments(void)
+{
+    int i, found = 0;
+
+    printHeader("DEPARTMENTS OVER BUDGET");
+    for (i = 0; i < deptCount; i++) {
+        if (deptSpent[i] > deptAllocated[i]) {
+            printf("%-16s over by N$%.2f\n", deptName[i],
+                   deptSpent[i] - deptAllocated[i]);
+            found++;
+        }
+    }
+    if (found == 0)
+        printf("No department has exceeded its budget.\n");
+}
+
+void loadSampleBudgets(void)
+{
+    const char *names[]   = {"Finance", "Engineering", "Health", "Water", "Roads"};
+    double allocated[]    = {500000, 1200000, 650000, 900000, 800000};
+    double spent[]        = {420000, 1250000, 310000, 905500, 120000};
+    int i;
+
+    for (i = 0; i < 5; i++) {
+        strcpy(deptName[deptCount], names[i]);
+        deptAllocated[deptCount] = allocated[i];
+        deptSpent[deptCount] = spent[i];
+        deptCount++;
+    }
+}
+
+void budgetMenu(void)
+{
+    int choice;
+
+    do {
+        printHeader("BUDGET MANAGEMENT");
+        printf("1. Add department budget\n");
+        printf("2. Record expenditure\n");
+        printf("3. Display all budgets\n");
+        printf("4. View one department\n");
+        printf("5. Show departments over budget\n");
+        printf("6. Back to main menu\n");
+        choice = readIntInRange("Enter your choice: ", 1, 6);
+
+        switch (choice) {
+            case 1: addDepartmentBudget();       break;
+            case 2: recordExpenditure();         break;
+            case 3: displayBudgets();            break;
+            case 4: viewDepartmentBudget();      break;
+            case 5: displayExceededDepartments();break;
+            case 6: break;
+        }
+        if (choice != 6)
+            pressEnter();
+    } while (choice != 6);
+}
+
+/* ===================== SUPPLIERS ===================== */
+static char supId[MAX_SUPPLIERS][SUP_ID_LEN];
+static char supName[MAX_SUPPLIERS][SUP_NAME_LEN];
+static char supEmail[MAX_SUPPLIERS][SUP_EMAIL_LEN];
+static char supPhone[MAX_SUPPLIERS][SUP_PHONE_LEN];
+static char supTown[MAX_SUPPLIERS][SUP_TOWN_LEN];
+static int  supCount = 0;
+
+int findSupplierById(const char *id)
+{
+    int i;
+    for (i = 0; i < supCount; i++) {
+        if (equalsIgnoreCase(supId[i], id))
+            return i;
+    }
+    return -1;
+}
+
+int getSupplierCount(void) { return supCount; }
+
+static void storeSupplier(const char *id, const char *name, const char *email,
+                          const char *phone, const char *town)
+{
+    strcpy(supId[supCount], id);
+    strcpy(supName[supCount], name);
+    strcpy(supEmail[supCount], email);
+    strcpy(supPhone[supCount], phone);
+    strcpy(supTown[supCount], town);
+    supCount++;
+}
+
+static void printSupplierHeader(void)
+{
+    printf("%-8s %-20s %-26s %-15s %-10s\n",
+           "ID", "Supplier", "Email", "Telephone", "Town");
+    printLine('-', LINE_WIDTH);
+}
+
+static void printSupplierRow(int i)
+{
+    printf("%-8.8s %-20.20s %-26.26s %-15.15s %-10.10s\n",
+           supId[i], supName[i], supEmail[i], supPhone[i], supTown[i]);
+}
+
+void addSupplier(void)
+{
+    char id[SUP_ID_LEN], name[SUP_NAME_LEN], email[SUP_EMAIL_LEN];
+    char phone[SUP_PHONE_LEN], town[SUP_TOWN_LEN];
+
+    printHeader("ADD SUPPLIER");
+    if (supCount >= MAX_SUPPLIERS) {
+        printf("The supplier list is full (%d suppliers).\n", MAX_SUPPLIERS);
+        return;
+    }
+    while (1) {
+        readRequiredString("Supplier ID (e.g. S001): ", id, SUP_ID_LEN);
+        if (findSupplierById(id) == -1)
+            break;
+        printf("  Error: a supplier with ID %s already exists.\n", id);
+    }
+    readRequiredString("Supplier name: ", name, SUP_NAME_LEN);
+    while (1) {
+        readRequiredString("Email: ", email, SUP_EMAIL_LEN);
+        if (isValidEmail(email))
+            break;
+        printf("  Error: enter a valid email (e.g. name@company.com.na).\n");
+    }
+    while (1) {
+        readRequiredString("Telephone: ", phone, SUP_PHONE_LEN);
+        if (isValidPhone(phone))
+            break;
+        printf("  Error: enter 7 to 15 digits (spaces, hyphens and a leading + are allowed).\n");
+    }
+    readRequiredString("Town/Location: ", town, SUP_TOWN_LEN);
+
+    storeSupplier(id, name, email, phone, town);
+    printf("\nSupplier %s added successfully.\n", name);
+}
+
+void displaySuppliers(void)
+{
+    int i;
+
+    printHeader("SUPPLIER LIST");
+    if (supCount == 0) {
+        printf("No suppliers have been registered yet.\n");
+        return;
+    }
+    printSupplierHeader();
+    for (i = 0; i < supCount; i++)
+        printSupplierRow(i);
+    printf("\nTotal suppliers: %d\n", supCount);
+}
+
+void searchSupplier(void)
+{
+    char term[SUP_NAME_LEN];
+    int option, i, found = 0;
+
+    printHeader("SEARCH SUPPLIER");
+    if (supCount == 0) {
+        printf("No suppliers have been registered yet.\n");
+        return;
+    }
+    printf("1. Search by Supplier ID (exact)\n");
+    printf("2. Search by name (partial)\n");
+    printf("3. Search by town (partial)\n");
+    option = readIntInRange("Choose search type: ", 1, 3);
+    readRequiredString("Search for: ", term, SUP_NAME_LEN);
+
+    printf("\n");
+    printSupplierHeader();
+    for (i = 0; i < supCount; i++) {
+        int match;
+        if (option == 1)
+            match = equalsIgnoreCase(supId[i], term);
+        else if (option == 2)
+            match = containsIgnoreCase(supName[i], term);
+        else
+            match = containsIgnoreCase(supTown[i], term);
+
+        if (match) {
+            printSupplierRow(i);
+            found++;
+        }
+    }
+    if (found == 0)
+        printf("No matching supplier found.\n");
+    else
+        printf("\n%d supplier(s) found.\n", found);
+}
+
+void compareSuppliers(void)
+{
+    char id1[SUP_ID_LEN], id2[SUP_ID_LEN];
+    char label1[100], label2[100], low1[SUP_NAME_LEN], low2[SUP_NAME_LEN];
+    int a, b, order;
+
+    printHeader("COMPARE TWO SUPPLIERS");
+    if (supCount < 2) {
+        printf("At least two suppliers are needed to compare.\n");
+        return;
+    }
+    readRequiredString("First supplier ID: ", id1, SUP_ID_LEN);
+    readRequiredString("Second supplier ID: ", id2, SUP_ID_LEN);
+    a = findSupplierById(id1);
+    b = findSupplierById(id2);
+    if (a == -1 || b == -1) {
+        printf("One or both supplier IDs were not found.\n");
+        return;
+    }
+    if (a == b) {
+        printf("Please enter two different suppliers.\n");
+        return;
+    }
+
+    /* build a readable label "Name - Town" for each supplier */
+    strcpy(label1, supName[a]);
+    strcat(label1, " - ");
+    strcat(label1, supTown[a]);
+    strcpy(label2, supName[b]);
+    strcat(label2, " - ");
+    strcat(label2, supTown[b]);
+
+    printf("\nSupplier 1: %s (%s)\n", label1, supEmail[a]);
+    printf("Supplier 2: %s (%s)\n", label2, supEmail[b]);
+    printLine('-', LINE_WIDTH);
+
+    if (equalsIgnoreCase(supTown[a], supTown[b]))
+        printf("Location : both suppliers are in %s.\n", supTown[a]);
+    else
+        printf("Location : different towns (%s and %s).\n", supTown[a], supTown[b]);
+
+    toLowerCopy(supName[a], low1, SUP_NAME_LEN);
+    toLowerCopy(supName[b], low2, SUP_NAME_LEN);
+    order = strcmp(low1, low2);
+    if (order == 0)
+        printf("Name     : both suppliers have the same name.\n");
+    else if (order < 0)
+        printf("Name     : %s comes before %s alphabetically.\n", supName[a], supName[b]);
+    else
+        printf("Name     : %s comes before %s alphabetically.\n", supName[b], supName[a]);
+
+    printf("Name size: %d characters vs %d characters.\n",
+           (int)strlen(supName[a]), (int)strlen(supName[b]));
+}
+
+void loadSampleSuppliers(void)
+{
+    storeSupplier("S001", "Windhoek Office Supplies", "sales@wos.com.na",       "061 223 456",  "Windhoek");
+    storeSupplier("S002", "Namib Fuel Distributors", "orders@namibfuel.com.na", "064 405 789",  "Walvis Bay");
+    storeSupplier("S003", "Kalahari Civil Works",    "info@kalaharicivil.na",   "066 301 222",  "Rundu");
+    storeSupplier("S004", "Oshana Hardware",         "hello@oshanahw.com.na",   "065 220 118",  "Oshakati");
+}
+
+void supplierMenu(void)
+{
+    int choice;
+
+    do {
+        printHeader("SUPPLIER MANAGEMENT");
+        printf("1. Add supplier\n");
+        printf("2. Display all suppliers\n");
+        printf("3. Search for a supplier\n");
+        printf("4. Compare two suppliers\n");
+        printf("5. Back to main menu\n");
+        choice = readIntInRange("Enter your choice: ", 1, 5);
+
+        switch (choice) {
+            case 1: addSupplier();      break;
+            case 2: displaySuppliers(); break;
+            case 3: searchSupplier();   break;
+            case 4: compareSuppliers(); break;
+            case 5: break;
+        }
+        if (choice != 5)
+            pressEnter();
+    } while (choice != 5);
+}
+
+/* ===================== ASSETS ===================== */
+#define CONDITION_COUNT 4
+
+static const char *assetTypes[ASSET_TYPE_COUNT] = {
+    "Vehicle", "Computer", "Building", "Equipment", "Furniture"
+};
+static const char *conditions[CONDITION_COUNT] = {
+    "Excellent", "Good", "Fair", "Poor"
+};
+
+static char   assetId[MAX_ASSETS][ASSET_ID_LEN];
+static char   assetName[MAX_ASSETS][ASSET_NAME_LEN];
+static char   assetType[MAX_ASSETS][ASSET_TYPE_LEN];
+static double assetValue[MAX_ASSETS];
+static char   assetDept[MAX_ASSETS][ASSET_DEPT_LEN];
+static char   assetCond[MAX_ASSETS][ASSET_COND_LEN];
+static int    assetCount = 0;
+
+int findAssetById(const char *id)
+{
+    int i;
+    for (i = 0; i < assetCount; i++) {
+        if (equalsIgnoreCase(assetId[i], id))
+            return i;
+    }
+    return -1;
+}
+
+int getAssetCount(void)                  { return assetCount; }
+double getAssetValue(int index)          { return assetValue[index]; }
+const char *getAssetType(int index)      { return assetType[index]; }
+const char *getAssetTypeName(int t)      { return assetTypes[t]; }
+
+static void storeAsset(const char *id, const char *name, const char *type,
+                       double value, const char *dept, const char *cond)
+{
+    strcpy(assetId[assetCount], id);
+    strcpy(assetName[assetCount], name);
+    strcpy(assetType[assetCount], type);
+    assetValue[assetCount] = value;
+    strcpy(assetDept[assetCount], dept);
+    strcpy(assetCond[assetCount], cond);
+    assetCount++;
+}
+
+static void printAssetHeader(void)
+{
+    printf("%-8s %-20s %-10s %14s %-12s %-9s\n",
+           "ID", "Asset", "Type", "Value (N$)", "Department", "Condition");
+    printLine('-', LINE_WIDTH);
+}
+
+static void printAssetRow(int i)
+{
+    printf("%-8.8s %-20.20s %-10.10s %14.2f %-12.12s %-9.9s\n",
+           assetId[i], assetName[i], assetType[i], assetValue[i],
+           assetDept[i], assetCond[i]);
+}
+
+/* Shows a numbered list and returns the chosen item (0-based index). */
+static int chooseFromList(const char *title, const char *items[], int count)
+{
+    int i;
+    printf("%s\n", title);
+    for (i = 0; i < count; i++)
+        printf("  %d. %s\n", i + 1, items[i]);
+    return readIntInRange("Select: ", 1, count) - 1;
+}
+
+void addAsset(void)
+{
+    char id[ASSET_ID_LEN], name[ASSET_NAME_LEN], dept[ASSET_DEPT_LEN];
+    double value;
+    int type, cond;
+
+    printHeader("ADD ASSET");
+    if (assetCount >= MAX_ASSETS) {
+        printf("The asset register is full (%d assets).\n", MAX_ASSETS);
+        return;
+    }
+    while (1) {
+        readRequiredString("Asset ID (e.g. A001): ", id, ASSET_ID_LEN);
+        if (findAssetById(id) == -1)
+            break;
+        printf("  Error: an asset with ID %s already exists.\n", id);
+    }
+    readRequiredString("Asset name: ", name, ASSET_NAME_LEN);
+    type  = chooseFromList("Asset type:", assetTypes, ASSET_TYPE_COUNT);
+    value = readAmount("Purchase value (N$): ", 0);
+    readRequiredString("Department: ", dept, ASSET_DEPT_LEN);
+    cond  = chooseFromList("Condition:", conditions, CONDITION_COUNT);
+
+    storeAsset(id, name, assetTypes[type], value, dept, conditions[cond]);
+    printf("\nAsset %s added successfully.\n", name);
+}
+
+void displayAssets(void)
+{
+    int i;
+
+    printHeader("ASSET REGISTER");
+    if (assetCount == 0) {
+        printf("No assets have been registered yet.\n");
+        return;
+    }
+    printAssetHeader();
+    for (i = 0; i < assetCount; i++)
+        printAssetRow(i);
+    printf("\nTotal assets: %d\n", assetCount);
+}
+
+void searchAsset(void)
+{
+    char term[ASSET_NAME_LEN];
+    int option, i, found = 0;
+
+    printHeader("SEARCH ASSET");
+    if (assetCount == 0) {
+        printf("No assets have been registered yet.\n");
+        return;
+    }
+    printf("1. Asset ID (exact)\n");
+    printf("2. Asset name (partial)\n");
+    printf("3. Asset type (partial)\n");
+    printf("4. Department (partial)\n");
+    printf("5. Condition (partial)\n");
+    option = readIntInRange("Choose search type: ", 1, 5);
+    readRequiredString("Search for: ", term, ASSET_NAME_LEN);
+
+    printf("\n");
+    printAssetHeader();
+    for (i = 0; i < assetCount; i++) {
+        int match = 0;
+        switch (option) {
+            case 1: match = equalsIgnoreCase(assetId[i], term);   break;
+            case 2: match = containsIgnoreCase(assetName[i], term);break;
+            case 3: match = containsIgnoreCase(assetType[i], term);break;
+            case 4: match = containsIgnoreCase(assetDept[i], term);break;
+            case 5: match = containsIgnoreCase(assetCond[i], term);break;
+        }
+        if (match) {
+            printAssetRow(i);
+            found++;
+        }
+    }
+    if (found == 0)
+        printf("No matching asset found.\n");
+    else
+        printf("\n%d asset(s) found.\n", found);
+}
+
+void loadSampleAssets(void)
+{
+    storeAsset("A001", "Toyota Hilux Bakkie",   "Vehicle",   485000, "Roads",       "Good");
+    storeAsset("A002", "Dell Laptop x10",       "Computer",  185000, "Finance",     "Excellent");
+    storeAsset("A003", "Civic Centre",          "Building", 7500000, "Admin",       "Good");
+    storeAsset("A004", "Water Pump Unit",       "Equipment", 320000, "Water",       "Fair");
+    storeAsset("A005", "Council Boardroom Set", "Furniture",  68000, "Admin",       "Poor");
+}
+
+void assetMenu(void)
+{
+    int choice;
+
+    do {
+        printHeader("ASSET MANAGEMENT");
+        printf("1. Add asset\n");
+        printf("2. Display asset register\n");
+        printf("3. Search for an asset\n");
+        printf("4. Back to main menu\n");
+        choice = readIntInRange("Enter your choice: ", 1, 4);
+
+        switch (choice) {
+            case 1: addAsset();      break;
+            case 2: displayAssets(); break;
+            case 3: searchAsset();   break;
+            case 4: break;
+        }
+        if (choice != 4)
+            pressEnter();
+    } while (choice != 4);
+}
+
+/* ===================== REPORTS ===================== */
+void employeeReport(void)
+{
+    int i, count = getEmployeeCount();
+    int highIdx = 0, lowIdx = 0;
+    double total = 0.0, gross;
+
+    printHeader("EMPLOYEE REPORT");
+    if (count == 0) {
+        printf("No employees have been recorded yet.\n");
+        return;
+    }
+    for (i = 0; i < count; i++) {
+        gross = getEmployeeGross(i);
+        total += gross;
+        if (gross > getEmployeeGross(highIdx)) highIdx = i;
+        if (gross < getEmployeeGross(lowIdx))  lowIdx = i;
+    }
+    printf("Total Employees : %d\n", count);
+    printf("Average Salary  : N$%.2f\n", total / count);
+    printf("Highest Salary  : N$%.2f (%s)\n", getEmployeeGross(highIdx), getEmployeeName(highIdx));
+    printf("Lowest Salary   : N$%.2f (%s)\n", getEmployeeGross(lowIdx),  getEmployeeName(lowIdx));
+    printf("Monthly Payroll : N$%.2f (gross)\n", total);
+    printf("\nNote: salary figures are gross (basic + allowances).\n");
+}
+
+void budgetReport(void)
+{
+    int i, count = getBudgetCount(), over = 0;
+    double allocated = 0.0, spent = 0.0;
+
+    printHeader("BUDGET REPORT");
+    if (count == 0) {
+        printf("No department budgets have been entered yet.\n");
+        return;
+    }
+    for (i = 0; i < count; i++) {
+        allocated += getBudgetAllocated(i);
+        spent += getBudgetSpent(i);
+    }
+    printf("Total Allocated Budget : N$%.2f\n", allocated);
+    printf("Total Expenditure      : N$%.2f\n", spent);
+    printf("Remaining Budget       : N$%.2f\n", calculateRemaining(allocated, spent));
+
+    printf("\nDepartments exceeding budget:\n");
+    for (i = 0; i < count; i++) {
+        if (getBudgetSpent(i) > getBudgetAllocated(i)) {
+            printf("  - %-14s over by N$%.2f\n", getBudgetName(i),
+                   getBudgetSpent(i) - getBudgetAllocated(i));
+            over++;
+        }
+    }
+    if (over == 0)
+        printf("  None - all departments are within budget.\n");
+    else
+        printf("\n%d of %d department(s) exceeded their budget.\n", over, count);
+}
+
+void supplierReport(void)
+{
+    displaySuppliers();
+}
+
+void assetReport(void)
+{
+    int t, i, n, count = getAssetCount();
+    double total = 0.0;
+
+    displayAssets();
+    if (count == 0)
+        return;
+
+    for (i = 0; i < count; i++)
+        total += getAssetValue(i);
+
+    printf("\nAssets by type:\n");
+    for (t = 0; t < ASSET_TYPE_COUNT; t++) {
+        n = 0;
+        for (i = 0; i < count; i++) {
+            if (strcmp(getAssetType(i), getAssetTypeName(t)) == 0)
+                n++;
+        }
+        printf("  %-10s : %d\n", getAssetTypeName(t), n);
+    }
+    printf("\nTotal purchase value of all assets: N$%.2f\n", total);
+}
+
+void reportsMenu(void)
+{
+    int choice;
+
+    do {
+        printHeader("REPORTS");
+        printf("1. Employee report\n");
+        printf("2. Budget report\n");
+        printf("3. Supplier report\n");
+        printf("4. Asset report\n");
+        printf("5. Back to main menu\n");
+        choice = readIntInRange("Enter your choice: ", 1, 5);
+
+        switch (choice) {
+            case 1: employeeReport(); break;
+            case 2: budgetReport();   break;
+            case 3: supplierReport(); break;
+            case 4: assetReport();    break;
+            case 5: break;
+        }
+        if (choice != 5)
+            pressEnter();
+    } while (choice != 5);
+}
+
+/* ===================== MAIN ===================== */
+static void displayMenu(void)
+{
+    printLine('=', 40);
+    printf("MUNICIPAL FINANCIAL MANAGEMENT SYSTEM\n");
+    printLine('=', 40);
+    printf("1. Employee Management\n");
+    printf("2. Budget Management\n");
+    printf("3. Supplier Management\n");
+    printf("4. Asset Management\n");
+    printf("5. Reports\n");
+    printf("6. Exit\n");
+}
+
+static void loadSampleData(void)
+{
+    loadSampleEmployees();
+    loadSampleBudgets();
+    loadSampleSuppliers();
+    loadSampleAssets();
+    printf("Sample data loaded.\n");
+}
+
+int main(void)
+{
+    int choice;
+
+    printf("Welcome to the Municipal Financial Management System (MFMS)\n\n");
+    if (confirm("Load sample data for testing? (y/n): "))
+        loadSampleData();
+
+    do {
+        printf("\n");
+        displayMenu();
+        choice = readIntInRange("Enter your choice: ", 1, 6);
+
+        switch (choice) {
+            case 1: employeeMenu(); break;
+            case 2: budgetMenu();   break;
+            case 3: supplierMenu(); break;
+            case 4: assetMenu();    break;
+            case 5: reportsMenu();  break;
+            case 6: printf("\nThank you for using MFMS. Goodbye!\n"); break;
+        }
+    } while (choice != 6);
+
+    return 0;
+}
