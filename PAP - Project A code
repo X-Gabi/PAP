@@ -5,7 +5,7 @@
 #include <ctype.h>
 #include <errno.h>
 
-/* ===================== DECLARATIONS ===================== */
+/* ===================== DECLARATIONS===================== */
 
 /* ---- utils ---- */
 #define LINE_WIDTH   80
